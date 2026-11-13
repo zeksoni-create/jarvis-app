@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="sr"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#040b14">
+<title>J.A.R.V.I.S.</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23040b14'/%3E%3Ccircle cx='50' cy='50' r='36' fill='none' stroke='%233fd0ff' stroke-width='4' stroke-dasharray='12 6'/%3E%3Ccircle cx='50' cy='50' r='10' fill='%233fd0ff'/%3E%3C/svg%3E">
+<style>
+:root{--bg:#040b14;--panel:#0a1a2a;--ink:#d8f3ff;--dim:#7fa6bb;--acc:#3fd0ff;--user:#0f2c44;--line:#3fd0ff44;color-scheme:dark}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{background:radial-gradient(circle at 50% 0,#3fd0ff33,transparent 55%),var(--bg);color:var(--ink);font-family:system-ui,sans-serif;display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+header{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.orb{width:42px;height:42px;flex:none;border-radius:50%;border:2px dashed var(--acc);display:grid;place-items:center;animation:spin 8s linear infinite}
+.orb i{width:13px;height:13px;border-radius:50%;background:var(--acc);box-shadow:0 0 10px var(--acc)}
+body[data-s=thinking] .orb{animation-duration:1s}body[data-s=listening] .orb i,body[data-s=speaking] .orb i{animation:p .7s infinite}
+@keyframes spin{to{transform:rotate(360deg)}}@keyframes p{50%{transform:scale(1.6)}}
+h1{font-size:14px;letter-spacing:.25em;margin:0}#st{font-size:11px;color:var(--dim);text-transform:uppercase}
+.sp{flex:1}
+.ib{background:none;border:1px solid var(--line);color:var(--acc);border-radius:10px;padding:7px 8px;font-size:12px}
+.ib.on{background:var(--acc);color:var(--bg)}
+#log{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.m{max-width:88%;padding:10px 13px;border-radius:14px;line-height:1.45;border:1px solid var(--line);white-space:pre-wrap}
+.ai{align-self:flex-start;background:var(--panel)}.me{align-self:flex-end;background:var(--user)}
+.card{display:block;margin-top:8px;padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:var(--user);color:var(--acc);text-decoration:none;font-size:14px}
+.bar{display:flex;gap:8px;padding:8px 14px 14px}
+#in{flex:1;min-width:0;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:12px;font-size:16px}
+.b{background:var(--acc);color:var(--bg);border:0;border-radius:12px;padding:0 16px;font-weight:700}
+#mic{background:var(--panel);color:var(--acc);border:1px solid var(--acc);width:48px;padding:0;font-size:20px}
+</style></head>
+<body data-s="idle">
+<header><div class="orb"><i></i></div><div><h1>J.A.R.V.I.S.</h1><div id="st">Spreman</div></div><div class="sp"></div>
+<button class="ib" id="name" title="Ime">👤</button><button class="ib" id="key" title="Promeni kljuc">🔑</button><button class="ib" id="web" title="Pretraga interneta">🌐</button><button class="ib" id="lang">SR</button><button class="ib" id="wake">Jarvis: off</button><button class="ib on" id="vol">🔊</button></header>
+<div id="log"></div>
+<div class="bar"><button class="b" id="mic" aria-label="Govori">🎙</button><input id="in" placeholder="Pitaj me bilo šta…" autocomplete="off"><button class="b" id="go">Pošalji</button></div>
+<script>
+const $=s=>document.querySelector(s), log=$('#log'), inp=$('#in');
+const MODEL='gemini-3.8-flash';
+const sysPrompt=()=>{
+  const n=store.get('name');
+  const who=n?`The user's name is ${n}: call him ${n}, never "sir". Open the very first reply of a conversation with "Yoo, what's up ${n}?" then answer.`
+    :`The user has not given a name: address them politely as "sir" now and then. Open the very first reply of a conversation with "Hello sir!" then answer.`;
+  return `You are J.A.R.V.I.S., a laid-back, witty AI sidekick who talks like a friend, not a butler. ${who} If the user writes or speaks in Serbian, answer in Serbian. Replies are spoken aloud: keep them short (1-3 sentences unless asked for more), plain text only, no markdown, lists or emojis. If the user asks for music, songs, artists or playlists, say one short line and add the tag [[music: search terms]] at the end (for example [[music: Serbian trap Devito]]). Never invent links.`;
+};
+const store={get:k=>{try{return localStorage.getItem(k)||''}catch(e){return ''}},set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}};
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+let hist=[],busy=false,voice=true,wake=false,speaking=false,rec=null,lang='sr-RS',useWeb=store.get('web')==='1';
+$('#web').classList.toggle('on',useWeb);
+const state=(s,t)=>{document.body.dataset.s=s;$('#st').textContent=t};
+function add(c,t){const d=document.createElement('div');d.className='m '+c;d.textContent=t;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
+{const n=store.get('name');add('ai',(n?'Yoo, what’s up '+n+'?':'Hello sir!')+' Kucaj ili tapni mikrofon.')}
+
+function getKey(force){
+  let k=store.get('gk');
+  if(!k||force){k=(prompt('Nalepi svoj Gemini API kljuc (ostaje samo na ovom telefonu):')||'').trim();if(k)store.set('gk',k)}
+  return k;
+}
+function speak(t){
+  if(!voice||!window.speechSynthesis)return state('idle','Spreman');
+  speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang=lang;
+  u.onstart=()=>{speaking=true;state('speaking','Govorim')};
+  u.onend=u.onerror=()=>{speaking=false;state('idle','Spreman');if(wake)listen()};
+  speechSynthesis.speak(u);
+}
+async function ask(){
+  const key=getKey(); if(!key) throw new Error('Treba mi API kljuc (dugme 🔑).');
+  const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+MODEL+':generateContent',{
+    method:'POST',headers:{'content-type':'application/json','x-goog-api-key':key},
+    body:JSON.stringify({
+      system_instruction:{parts:[{text:sysPrompt()+'\nCurrent date and time: '+new Date().toString()}]},
+      contents:hist.slice(-12).map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]})),
+      ...(useWeb?{tools:[{google_search:{}}]}:{})
+    })});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok){
+    if(r.status===400||r.status===403)throw new Error('Kljuc ne radi. Tapni 🔑 i nalepi ga ponovo.');
+    if(r.status===429)throw new Error('Previse zahteva, sacekaj minut.');
+    throw new Error((d.error&&d.error.message)||'Greska '+r.status);
+  }
+  return ((d.candidates&&d.candidates[0]&&d.candidates[0].content&&d.candidates[0].content.parts)||[]).map(p=>p.text||'').join('').trim();
+}
+async function send(text){
+  text=(text||'').trim();if(!text||busy)return;
+  window.speechSynthesis&&speechSynthesis.cancel();inp.value='';busy=true;
+  add('me',text);hist.push({role:'user',content:text});state('thinking','Razmisljam');
+  const b=add('ai','…');
+  try{
+    let out=await ask();const q=[];
+    out=out.replace(/\[\[music:\s*([^\]]+)\]\]/gi,(_,x)=>{q.push(x.trim());return ''}).trim()||'Evo ga.';
+    b.textContent=out;hist.push({role:'assistant',content:out});
+    q.forEach(x=>{const a=document.createElement('a');a.className='card';a.target='_blank';a.rel='noopener';
+      a.href='https://open.spotify.com/search/'+encodeURIComponent(x);a.textContent='🎧 Otvori “'+x+'” na Spotify-u';b.appendChild(a)});
+    speak(out);
+  }catch(e){hist.pop();b.textContent='Nesto nije u redu: '+e.message;state('idle','Spreman')}
+  busy=false;
+}
+function listen(){
+  if(!SR||rec||speaking||busy)return;
+  rec=new SR();rec.lang=lang;rec.continuous=wake;rec.interimResults=false;
+  rec.onstart=()=>state('listening','Slusam');
+  rec.onresult=e=>{
+    const t=e.results[e.results.length-1][0].transcript.trim();
+    if(!wake)return send(t);
+    const m=t.match(/(?:jarvis|džarvis|jarvise)[\s,.!?]*(.*)/i);if(m)send(m[1]||'Yo');
+  };
+  rec.onend=()=>{rec=null;if(!speaking&&!busy)state('idle','Spreman');if(wake&&!speaking&&!busy)setTimeout(listen,300)};
+  rec.onerror=()=>{};
+  try{rec.start()}catch(e){rec=null}
+}
+$('#go').onclick=()=>send(inp.value);
+inp.onkeydown=e=>{if(e.key==='Enter')send(inp.value)};
+$('#mic').onclick=()=>{
+  if(!SR)return add('ai','Ovaj browser nema glasovni unos. Probaj Chrome.');
+  if(rec){rec.stop();return}
+  wake=false;$('#wake').classList.remove('on');$('#wake').textContent='Jarvis: off';listen();
+};
+$('#wake').onclick=e=>{
+  if(!SR)return;wake=!wake;e.target.classList.toggle('on',wake);e.target.textContent='Jarvis: '+(wake?'on':'off');
+  if(rec)rec.stop();else if(wake)listen();
+};
+$('#vol').onclick=e=>{voice=!voice;e.target.classList.toggle('on',voice);e.target.textContent=voice?'🔊':'🔇';if(!voice&&window.speechSynthesis)speechSynthesis.cancel()};
+$('#lang').onclick=e=>{lang=lang==='sr-RS'?'en-US':'sr-RS';e.target.textContent=lang==='sr-RS'?'SR':'EN'};
+$('#key').onclick=()=>getKey(true);
+$('#name').onclick=()=>{const n=(prompt('Kako da te zovem? (prazno = sir)')||'').trim().slice(0,30);store.set('name',n);hist=[];add('ai',n?'Evo, '+n+'. Zvaću te tako.':'Okej, zvaću te sir.')};
+$('#web').onclick=e=>{useWeb=!useWeb;store.set('web',useWeb?'1':'0');e.target.classList.toggle('on',useWeb);add('ai',useWeb?'Pretraga interneta ukljucena (ako je tvoj nalog dozvoljava).':'Pretraga interneta iskljucena.')};
+
+// Make it installable from a single file
+try{
+  const base=location.href.split('#')[0];
+  const icon='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#040b14"/><circle cx="256" cy="256" r="190" fill="none" stroke="#3fd0ff" stroke-width="14" stroke-dasharray="60 30"/><circle cx="256" cy="256" r="50" fill="#3fd0ff"/></svg>');
+  const man={name:'J.A.R.V.I.S.',short_name:'Jarvis',start_url:base,scope:base,display:'standalone',background_color:'#040b14',theme_color:'#040b14',icons:[{src:icon,sizes:'512x512',type:'image/svg+xml'}]};
+  const l=document.createElement('link');l.rel='manifest';
+  l.href=URL.createObjectURL(new Blob([JSON.stringify(man)],{type:'application/manifest+json'}));
+  document.head.appendChild(l);
+}catch(e){}
+</script></body></html>
